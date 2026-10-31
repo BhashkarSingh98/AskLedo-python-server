@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "askledo-python"
+version = "0.1.0"
+description = "AskLedo personalized matching service"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi==0.115.6",
+  "uvicorn[standard]==0.32.1",
+  "sqlalchemy>=2.0.36,<3",
+  "psycopg[binary]>=3.2.0,<4",
+  "pydantic-settings>=2.16.2",
+  "httpx>=0.28.1",
+  "google-genai>=2.34.0",
+]
+
+[project.scripts]
+askledo = "askledo.run:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["askledo"]
+
+[tool.uv]
+package = true

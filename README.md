@@ -1,61 +1,58 @@
-# AskLedo Python API (Phase 1)
+# AskLedo Python API
 
 **Git remote (SSH, personal key):** `git@github-bhashkar98:BhashkarSingh98/AskLedo-python-server.git`
 
 Use host `github-bhashkar98`, not `github.com` (Ankpal account). Test: `ssh -T git@github-bhashkar98`
 
-Standalone **FastAPI** hello service for learning Python. It does **not** replace the Nest API in [`../server/`](../server/). The Quasar app still talks to Nest on port **3000**.
+Personalized matching service. Every minute a cron picks up queries the user consented to (`ROUTING_PENDING` in Nest), ranks verified solutioners for **that** query with the configured LLM, and writes `in.business_match` + `in.lead` snapshots. The Quasar app still talks only to Nest on port **3000**.
 
 | Service | Port | Purpose |
 | --- | --- | --- |
-| Nest (AskLedo product API) | 3000 | Auth, queries, Gemini, matching, leads |
+| Nest (AskLedo product API) | 3000 | Auth, chat + extraction, consent, leads API |
 | Quasar web | 9000 | Frontend |
-| **This Python API** | **8000** | Hello + health (learning only) |
+| **This Python API** | **8000** | Matching cron, health |
 
-## Setup (venv)
+## Setup
 
-Requires **Python 3.11+** (3.10+ is usually fine).
+Requires **Python 3.12+** (3.13 recommended with [uv](https://docs.astral.sh/uv/)).
 
 ```bash
 cd python-api
-python3 -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+uv sync
+cp .env.example .env   # set DATABASE_URL (same as server/.env) and LLM_PROVIDER
 ```
 
-Optional: copy env (port only, no secrets):
+Classic venv: `python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`.
 
-```bash
-cp .env.example .env
-```
+`LLM_PROVIDER=vllm` (self-hosted, default) or `gemini`. See [docs/LLM.md](../docs/LLM.md).
 
 ## Run
 
 ```bash
-uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+uv run python askledo/run.py        # Python API + cron on :8000
 ```
 
-## Verify
+Check: `curl http://127.0.0.1:8000/health`. OpenAPI: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs).
 
-```bash
-curl http://127.0.0.1:8000/
-curl http://127.0.0.1:8000/health
+## How matching works
+
+1. `app/routing.py` wakes every `ROUTING_INTERVAL_SECONDS` and claims queries that have been `ROUTING_PENDING` for at least `ROUTING_DELAY_SECONDS` (`FOR UPDATE SKIP LOCKED`, so several workers are safe).
+2. `app/matching.py` shortlists verified businesses with rule scores (category, city/state, budget, rating, response), then asks the LLM to rank the top 30 with a fit % and reason. If the LLM fails, the rule order is used.
+3. The top `ROUTING_TOP_SOLUTIONERS` become `business_match` rows and `lead` snapshots (summary, category, location, budget — never the chat). The query moves to `ROUTED`.
+
+## Layout
+
+```text
+app/
+  main.py        # FastAPI; lifespan starts the cron
+  settings.py    # env
+  llm.py         # VllmProvider, GeminiProvider, request_json
+  matching.py    # shortlist + LLM rank
+  routing.py     # cron: claim, rank, write matches + leads
+  database/      # base.py, session.py
+  models/
+    central/     # country, user_query
+    india/       # business, matching (schema `in`)
 ```
 
-Open **OpenAPI docs**: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) — compare with Nest Swagger at [http://localhost:3000/docs](http://localhost:3000/docs).
-
-## Nest vs Python (mental map)
-
-| Nest (TypeScript) | Python (FastAPI) |
-| --- | --- |
-| Module | `APIRouter` / routes on `app` |
-| DTO + class-validator | Pydantic models |
-| Controller | Route functions |
-| `GeminiService` | Future phase: embedding script or sidecar — not in phase 1 |
-
-## Phase 2+ (not built yet)
-
-- Call Gemini **embedding** API from a small route or script.
-- Optional batch jobs reading Postgres — Nest keeps orchestration per [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md).
-
-Do not commit `.venv/`.
+Table DDL stays in Nest: **`server/database/migrations/`**. Python maps existing tables only. More in [database/README.md](database/README.md).
